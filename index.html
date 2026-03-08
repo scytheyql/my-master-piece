@@ -423,6 +423,41 @@
             color: var(--muted);
         }
         .btn-ghost:hover { border-color: rgba(255,255,255,0.15); color: var(--text); }
+
+        /* === MUTE BUTTON === */
+        .mute-btn {
+            position: fixed;
+            bottom: 22px; right: 22px;
+            z-index: 500;
+            width: 42px; height: 42px;
+            border-radius: 50%;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: border-color 0.2s, color 0.2s, background 0.2s, transform 0.15s;
+        }
+        .mute-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--glow);
+            transform: scale(1.08);
+        }
+        .mute-btn.muted { color: #ff4d6d; border-color: rgba(255,77,109,0.35); }
+        .mute-bars { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+        .mute-bars .bar {
+            width: 3px; border-radius: 2px; background: currentColor;
+            animation: eq var(--d, 0.8s) ease-in-out infinite alternate;
+        }
+        .mute-bars .bar:nth-child(1) { height: 6px;  --d: 0.7s; }
+        .mute-bars .bar:nth-child(2) { height: 12px; --d: 0.5s; }
+        .mute-bars .bar:nth-child(3) { height: 9px;  --d: 0.9s; }
+        .mute-btn.muted .bar { animation: none; height: 3px !important; opacity: 0.35; }
+        @keyframes eq {
+            from { transform: scaleY(0.3); }
+            to   { transform: scaleY(1); }
+        }
     </style>
 </head>
 <body>
@@ -470,7 +505,269 @@
         </div>
     </div>
 
+    <!-- Mute toggle -->
+    <button class="mute-btn" id="muteBtn" onclick="toggleMute()" title="Toggle music">
+        <div class="mute-bars">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+        </div>
+    </button>
+
 <script>
+    // ── AUDIO ENGINE ─────────────────────────────────────────────────
+    let audioCtx = null;
+    let musicGain = null;
+    let sfxGain = null;
+    let musicPlaying = false;
+    let isMuted = false;
+    let schedulerTimer = null;
+
+    // B major chord tones (Hz) — Emaj7, Bmaj7, B, F# pattern
+    const CHORDS = [
+        [164.81, 207.65, 246.94, 311.13], // Emaj7 — E4 G#4 B4 D#5
+        [123.47, 155.56, 185.00, 246.94], // Bmaj7 — B3 D#4 F#4 B4
+        [123.47, 155.56, 185.00, 233.08], // B     — B3 D#4 F#4 A#4
+        [92.50,  123.47, 185.00, 246.94]  // F#    — F#3 B3 F#4 B4
+    ];
+    const BPM = 84;
+    const BEAT = 60 / BPM;        // seconds per beat
+    const BAR  = BEAT * 4;        // 4/4
+    const PATTERN_BARS = 4;       // chord changes every bar
+
+    let nextNoteTime = 0;
+    let currentBar   = 0;
+    let currentBeat  = 0;
+
+    function getCtx() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            musicGain = audioCtx.createGain();
+            musicGain.gain.value = 0.18;
+            musicGain.connect(audioCtx.destination);
+            sfxGain = audioCtx.createGain();
+            sfxGain.gain.value = 0.35;
+            sfxGain.connect(audioCtx.destination);
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+    }
+
+    // ── DRUM SYNTHESIS ───────────────────────────────────────────────
+    function kick(ctx, t) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.setValueAtTime(160, t);
+        osc.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+        gain.gain.setValueAtTime(1.2, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+        osc.connect(gain); gain.connect(musicGain);
+        osc.start(t); osc.stop(t + 0.35);
+    }
+
+    function snare(ctx, t) {
+        // noise burst
+        const bufLen = ctx.sampleRate * 0.12;
+        const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass'; filter.frequency.value = 1800; filter.Q.value = 0.7;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.55, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+        src.connect(filter); filter.connect(gain); gain.connect(musicGain);
+        src.start(t); src.stop(t + 0.18);
+    }
+
+    function hihat(ctx, t, open = false) {
+        const bufLen = ctx.sampleRate * (open ? 0.18 : 0.05);
+        const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'highpass'; filter.frequency.value = 7000;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.22, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + (open ? 0.18 : 0.05));
+        src.connect(filter); filter.connect(gain); gain.connect(musicGain);
+        src.start(t); src.stop(t + (open ? 0.18 : 0.05));
+    }
+
+    // ── CHORD STRUM ──────────────────────────────────────────────────
+    function strum(ctx, chord, t, vol = 0.07) {
+        chord.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.value = freq;
+            const strumOffset = i * 0.018;
+            gain.gain.setValueAtTime(0, t + strumOffset);
+            gain.gain.linearRampToValueAtTime(vol, t + strumOffset + 0.02);
+            gain.gain.setTargetAtTime(vol * 0.3, t + strumOffset + 0.1, 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+            osc.connect(gain); gain.connect(musicGain);
+            osc.start(t + strumOffset); osc.stop(t + 0.8);
+        });
+    }
+
+    // ── BASSLINE ─────────────────────────────────────────────────────
+    // Root notes of each chord, one octave down
+    const BASS_NOTES = [41.20, 30.87, 30.87, 23.12]; // E2, B1, B1, F#1
+    function bass(ctx, note, t) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = note * 2; // bump up one octave for clarity
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass'; filter.frequency.value = 320;
+        gain.gain.setValueAtTime(0.45, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + BEAT * 0.85);
+        osc.connect(filter); filter.connect(gain); gain.connect(musicGain);
+        osc.start(t); osc.stop(t + BEAT);
+    }
+
+    // ── SCHEDULER ────────────────────────────────────────────────────
+    function scheduleBeat(ctx, t, bar, beat) {
+        const chordIdx = bar % PATTERN_BARS;
+        const chord = CHORDS[chordIdx];
+
+        // Kick: beats 1 and 3 (indices 0, 2), plus a weak hit on the "and" of 2
+        if (beat === 0 || beat === 2) kick(ctx, t);
+        if (beat === 1) {
+            // soft kick on the "and" of beat 2 (offset half a beat)
+            kick(ctx, t + BEAT * 0.5);
+        }
+
+        // Snare: beats 2 and 4
+        if (beat === 1 || beat === 3) snare(ctx, t);
+
+        // Hi-hat: every 8th note
+        hihat(ctx, t, beat === 3);                  // open on beat 4
+        hihat(ctx, t + BEAT * 0.5);                 // off-beat
+
+        // Strum on beat 1 of each bar; ghost strum on beat 3
+        if (beat === 0) strum(ctx, chord, t, 0.08);
+        if (beat === 2) strum(ctx, chord, t, 0.045);
+
+        // Bassline on every beat 1 and 3
+        if (beat === 0 || beat === 2) bass(ctx, BASS_NOTES[chordIdx], t);
+    }
+
+    function scheduleAhead() {
+        const ctx = getCtx();
+        const lookAhead = 0.1; // seconds
+        while (nextNoteTime < ctx.currentTime + lookAhead) {
+            scheduleBeat(ctx, nextNoteTime, currentBar, currentBeat);
+            nextNoteTime += BEAT;
+            currentBeat++;
+            if (currentBeat >= 4) { currentBeat = 0; currentBar++; }
+        }
+    }
+
+    function startMusic() {
+        if (musicPlaying) return;
+        const ctx = getCtx();
+        musicPlaying = true;
+        nextNoteTime = ctx.currentTime + 0.1;
+        currentBeat = 0; currentBar = 0;
+        schedulerTimer = setInterval(scheduleAhead, 25);
+    }
+
+    function stopMusic() {
+        clearInterval(schedulerTimer);
+        schedulerTimer = null;
+        musicPlaying = false;
+    }
+
+    function toggleMute() {
+        const ctx = getCtx();
+        isMuted = !isMuted;
+        const btn = document.getElementById('muteBtn');
+        if (isMuted) {
+            musicGain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
+            btn.classList.add('muted');
+        } else {
+            musicGain.gain.setTargetAtTime(0.18, ctx.currentTime, 0.2);
+            btn.classList.remove('muted');
+        }
+    }
+
+    // SFX — synthesized, no files needed
+    function sfxClick() {
+        const ctx = getCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(520, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.5, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+        osc.connect(gain); gain.connect(sfxGain);
+        osc.start(); osc.stop(ctx.currentTime + 0.12);
+    }
+
+    function sfxOpen() {
+        const ctx = getCtx();
+        [0, 0.06, 0.12].forEach((t, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = [440, 550, 660][i];
+            gain.gain.setValueAtTime(0, ctx.currentTime + t);
+            gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + t + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.15);
+            osc.connect(gain); gain.connect(sfxGain);
+            osc.start(ctx.currentTime + t);
+            osc.stop(ctx.currentTime + t + 0.15);
+        });
+    }
+
+    function sfxClose() {
+        const ctx = getCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(400, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(180, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        osc.connect(gain); gain.connect(sfxGain);
+        osc.start(); osc.stop(ctx.currentTime + 0.15);
+    }
+
+    function sfxHover() {
+        const ctx = getCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 680;
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+        osc.connect(gain); gain.connect(sfxGain);
+        osc.start(); osc.stop(ctx.currentTime + 0.06);
+    }
+
+    function sfxModal() {
+        const ctx = getCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(500, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+        osc.connect(gain); gain.connect(sfxGain);
+        osc.start(); osc.stop(ctx.currentTime + 0.2);
+    }
+
+    // Start music on first interaction
+    document.addEventListener('click', () => { if (!musicPlaying) startMusic(); }, { once: true });
+
     let currentCategory = '';
     let pendingMember = '';
 
@@ -514,7 +811,7 @@
     }
 
     function attachTypewriter(el) {
-        el.addEventListener('mouseenter', () => startTypewriter(el));
+        el.addEventListener('mouseenter', () => { sfxHover(); startTypewriter(el); });
         el.addEventListener('mouseleave', () => stopTypewriter(el));
     }
 
@@ -531,6 +828,7 @@
     }
 
     function openCategory(cat) {
+        sfxOpen();
         currentCategory = cat;
         document.querySelectorAll('.category').forEach(c => {
             c.classList.remove('highlighted');
@@ -605,6 +903,7 @@
     }
 
     function toggleSubItem(el) {
+        sfxClick();
         const wasHighlighted = el.classList.contains('highlighted');
         document.querySelectorAll('.sub-item').forEach(s => {
             s.classList.remove('highlighted');
@@ -621,15 +920,18 @@
     }
 
     function confirmMember(member) {
+        sfxModal();
         pendingMember = member;
         document.getElementById('modal').classList.add('visible');
     }
     function confirmOpen() {
+        sfxOpen();
         document.getElementById('modal').classList.remove('visible');
         openMember(pendingMember);
         pendingMember = '';
     }
     function cancelOpen() {
+        sfxClose();
         document.getElementById('modal').classList.remove('visible');
         pendingMember = '';
     }
@@ -712,6 +1014,7 @@
     }
 
     function closeMain() {
+        sfxClose();
         document.getElementById('sidebar').classList.remove('expanded');
         document.getElementById('main').classList.remove('visible');
         document.querySelectorAll('.category').forEach(c => {
