@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GROUP 1 // Research Hub</title>
+    <title>GROUP 1 — Research Hub</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -193,6 +193,20 @@
         .content::-webkit-scrollbar { width: 4px; }
         .content::-webkit-scrollbar-track { background: transparent; }
         .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .placeholder a.doc-link {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(77,127,255,0.3);
+            transition: color 0.2s, border-color 0.2s;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+        }
+        .placeholder a.doc-link:hover {
+            color: #7aa8ff;
+            border-color: rgba(77,127,255,0.7);
+        }
 
         /* === SECTION TITLE === */
         .section-title {
@@ -552,10 +566,8 @@
                     content.innerHTML = `
                         <div class="section-title">Word</div>
                         <div class="section-sub">02 — DOCUMENTS</div>
-                        ${makeSubItem('Research')}
-                        <div class="placeholder">N/A — Courtesy: Hannah Sophia Gabi</div>
-                        ${makeSubItem('Questionnaire')}
-                        <div class="placeholder">N/A — Courtesy: Hannah Sophia Gabi</div>
+                        ${makeSubItem('Research & Questionnaire')}
+                        <div class="placeholder"><a href="https://docs.google.com/document/d/1NAqoKWlWu8e_W-UDxGD0O1HYbPG75ei0/edit" target="_blank" class="doc-link">Open in Google Docs &rarr;</a></div>
                     `;
                     break;
                 case 'excel':
@@ -563,7 +575,7 @@
                         <div class="section-title">Excel</div>
                         <div class="section-sub">03 — SPREADSHEETS</div>
                         ${makeSubItem('Data')}
-                        <div class="placeholder">N/A — Courtesy: Hannah Sophia Gabi</div>
+                        <div class="placeholder"><a href="https://docs.google.com/spreadsheets/d/1sIa5pDCEQSmSAqqRUFe24NgnUtrTLeW8/edit?gid=334668254#gid=334668254" target="_blank" class="doc-link">Open in Google Sheets &rarr;</a></div>
                     `;
                     break;
                 case 'powerpoint':
@@ -571,7 +583,7 @@
                         <div class="section-title">PowerPoint</div>
                         <div class="section-sub">04 — PRESENTATIONS</div>
                         ${makeSubItem('PowerPoint Presentation')}
-                        <div class="placeholder">N/A — Courtesy: Hannah Sophia Gabi</div>
+                        <div class="placeholder"><a href="https://docs.google.com/presentation/d/1qeQzrYR-gLqQucKxa-eThhm6gf5y7Oat/edit?slide=id.p1#slide=id.p1" target="_blank" class="doc-link">Open in Google Slides &rarr;</a></div>
                     `;
                     break;
             }
@@ -711,5 +723,3 @@
 </script>
 </body>
 </html>
-
-
